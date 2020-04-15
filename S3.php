@@ -32,7 +32,7 @@
 * Amazon S3 PHP class
 *
 * @link http://undesigned.org.za/2007/10/22/amazon-s3-php-class
-* @version 0.5.1
+* @version 0.6
 */
 class S3
 {
@@ -80,7 +80,7 @@ class S3
 	 * Default delimiter to be used, for example while getBucket().
 	 * @var string
 	 * @access public
-	 * @static 
+	 * @static
 	 */
 	public static $defDelimiter = null;
 
@@ -92,6 +92,15 @@ class S3
 	 * @static
 	 */
 	public static $endpoint = 's3.amazonaws.com';
+
+	/**
+	 * Use DNS-style bucket name in domain (Amazon default, but not supported by clones like Minio)
+	 *
+	 * @var bool
+	 * @acess public
+	 * @static
+	 */
+	public static $useDnsBucket = true;
 
 	/**
 	 * AWS Region
@@ -162,7 +171,7 @@ class S3
 	 * @static
 	 */
 	public static $sslKey = null;
-	
+
 	/**
 	 * SSL client certfificate
 	 *
@@ -171,7 +180,7 @@ class S3
 	 * @static
 	 */
 	public static $sslCert = null;
-	
+
 	/**
 	 * SSL CA cert (only required if you are having problems with your system CA cert)
 	 *
@@ -180,7 +189,7 @@ class S3
 	 * @static
 	 */
 	public static $sslCACert = null;
-	
+
 	/**
 	 * AWS Key Pair ID
 	 *
@@ -189,22 +198,22 @@ class S3
 	 * @static
 	 */
 	private static $__signingKeyPairId = null;
-	
+
 	/**
 	 * Key resource, freeSigningKey() must be called to clear it from memory
 	 *
 	 * @var bool
 	 * @access private
-	 * @static 
+	 * @static
 	 */
 	private static $__signingKeyResource = false;
 
 	/**
-	 * CURL progress function callback 
+	 * CURL progress function callback
 	 *
 	 * @var function
 	 * @access public
-	 * @static 
+	 * @static
 	 */
 	public static $progressFunction = null;
 
@@ -215,15 +224,17 @@ class S3
 	* @param string $secretKey Secret key
 	* @param boolean $useSSL Enable SSL
 	* @param string $endpoint Amazon URI
+	* @param bool $useDnsBucket Use https://bucket.endpoint.domain -style bucket references, instead of https://endpoint.domain/bucket style.
 	* @return void
 	*/
-	public function __construct($accessKey = null, $secretKey = null, $useSSL = false, $endpoint = 's3.amazonaws.com', $region = '')
+	public function __construct($accessKey = null, $secretKey = null, $useSSL = false, $endpoint = 's3.amazonaws.com', $region = '', $useDnsBucket = true)
 	{
 		if ($accessKey !== null && $secretKey !== null)
 			self::setAuth($accessKey, $secretKey);
 		self::$useSSL = $useSSL;
 		self::$endpoint = $endpoint;
 		self::$region = $region;
+		self::$useDnsBucket = $useDnsBucket;
 	}
 
 
@@ -233,9 +244,10 @@ class S3
 	* @param string $host Hostname
 	* @return void
 	*/
-	public function setEndpoint($host)
+	public function setEndpoint($host, $supportsDnsBucketName = true)
 	{
 		self::$endpoint = $host;
+		self::$useDnsBucket = $supportsDnsBucketName;
 	}
 
 
@@ -262,13 +274,13 @@ class S3
 		$region = self::$region;
 
 		// parse region from endpoint if not specific
-		if (empty($region)) 
+		if (empty($region))
 		{
-			if (preg_match("/s3[.-](?:website-|dualstack\.)?(.+)\.amazonaws\.com/i", self::$endpoint, $match) !== 0 
-			&& strtolower($match[1]) !== "external-1") 
+			if (preg_match("/s3[.-](?:website-|dualstack\.)?(.+)\.amazonaws\.com/i", self::$endpoint, $match) !== 0
+			&& strtolower($match[1]) !== "external-1")
 			{
 				$region = $match[1];
-			}		
+			}
 		}
 
 		return empty($region) ? 'us-east-1' : $region;
@@ -373,7 +385,7 @@ class S3
 			$rest = new S3Request('HEAD');
 			$rest = $rest->getResponse();
 			$awstime = $rest->headers['date'];
-			$systime = time();			
+			$systime = time();
 			$offset = $systime > $awstime ? -($systime - $awstime) : ($awstime - $systime);
 		}
 		self::$__timeOffset = $offset;
@@ -413,7 +425,7 @@ class S3
 	/**
 	* Set progress function
 	*
-	* @param function $func Progress function 
+	* @param function $func Progress function
 	* @return void
 	*/
 	public static function setProgressFunction($func = null)
@@ -449,7 +461,7 @@ class S3
 	*/
 	public static function listBuckets($detailed = false)
 	{
-		$rest = new S3Request('GET', '', '', self::$endpoint);
+		$rest = new S3Request('GET', '', '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 200)
 			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
@@ -495,7 +507,7 @@ class S3
 	*/
 	public static function getBucket($bucket, $prefix = null, $marker = null, $maxKeys = null, $delimiter = null, $returnCommonPrefixes = false)
 	{
-		$rest = new S3Request('GET', $bucket, '', self::$endpoint);
+		$rest = new S3Request('GET', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		if ($maxKeys == 0) $maxKeys = null;
 		if ($prefix !== null && $prefix !== '') $rest->setParameter('prefix', $prefix);
 		if ($marker !== null && $marker !== '') $rest->setParameter('marker', $marker);
@@ -541,7 +553,7 @@ class S3
 		if ($maxKeys == null && $nextMarker !== null && (string)$response->body->IsTruncated == 'true')
 		do
 		{
-			$rest = new S3Request('GET', $bucket, '', self::$endpoint);
+			$rest = new S3Request('GET', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 			if ($prefix !== null && $prefix !== '') $rest->setParameter('prefix', $prefix);
 			$rest->setParameter('marker', $nextMarker);
 			if ($delimiter !== null && $delimiter !== '') $rest->setParameter('delimiter', $delimiter);
@@ -583,7 +595,7 @@ class S3
 	*/
 	public static function putBucket($bucket, $acl = self::ACL_PRIVATE, $location = false)
 	{
-		$rest = new S3Request('PUT', $bucket, '', self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setAmzHeader('x-amz-acl', $acl);
 
 		if ($location === false) $location = self::getRegion();
@@ -621,7 +633,7 @@ class S3
 	*/
 	public static function deleteBucket($bucket)
 	{
-		$rest = new S3Request('DELETE', $bucket, '', self::$endpoint);
+		$rest = new S3Request('DELETE', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 204)
 			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
@@ -704,7 +716,7 @@ class S3
 	public static function putObject($input, $bucket, $uri, $acl = self::ACL_PRIVATE, $metaHeaders = array(), $requestHeaders = array(), $storageClass = self::STORAGE_CLASS_STANDARD, $serverSideEncryption = self::SSE_NONE)
 	{
 		if ($input === false) return false;
-		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 
 		if (!is_array($input)) $input = array(
 			'data' => $input, 'size' => strlen($input),
@@ -826,7 +838,7 @@ class S3
 	*/
 	public static function getObject($bucket, $uri, $saveTo = false)
 	{
-		$rest = new S3Request('GET', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('GET', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		if ($saveTo !== false)
 		{
 			if (is_resource($saveTo))
@@ -861,7 +873,7 @@ class S3
 	*/
 	public static function getObjectInfo($bucket, $uri, $returnInfo = true)
 	{
-		$rest = new S3Request('HEAD', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('HEAD', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && ($rest->code !== 200 && $rest->code !== 404))
 			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
@@ -890,7 +902,7 @@ class S3
 	*/
 	public static function copyObject($srcBucket, $srcUri, $bucket, $uri, $acl = self::ACL_PRIVATE, $metaHeaders = array(), $requestHeaders = array(), $storageClass = self::STORAGE_CLASS_STANDARD)
 	{
-		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setHeader('Content-Length', 0);
 		foreach ($requestHeaders as $h => $v)
 				strpos($h, 'x-amz-') === 0 ? $rest->setAmzHeader($h, $v) : $rest->setHeader($h, $v);
@@ -927,7 +939,7 @@ class S3
 	*/
 	public static function setBucketRedirect($bucket = NULL, $location = NULL)
 	{
-		$rest = new S3Request('PUT', $bucket, '', self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 
 		if( empty($bucket) || empty($location) ) {
 			self::__triggerError("S3::setBucketRedirect({$bucket}, {$location}): Empty parameter.", __FILE__, __LINE__);
@@ -1004,7 +1016,7 @@ class S3
 		}
 		$dom->appendChild($bucketLoggingStatus);
 
-		$rest = new S3Request('PUT', $bucket, '', self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setParameter('logging', null);
 		$rest->data = $dom->saveXML();
 		$rest->size = strlen($rest->data);
@@ -1033,7 +1045,7 @@ class S3
 	*/
 	public static function getBucketLogging($bucket)
 	{
-		$rest = new S3Request('GET', $bucket, '', self::$endpoint);
+		$rest = new S3Request('GET', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setParameter('logging', null);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 200)
@@ -1072,7 +1084,7 @@ class S3
 	*/
 	public static function getBucketLocation($bucket)
 	{
-		$rest = new S3Request('GET', $bucket, '', self::$endpoint);
+		$rest = new S3Request('GET', $bucket, '', self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setParameter('location', null);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 200)
@@ -1136,7 +1148,7 @@ class S3
 		$accessControlPolicy->appendChild($accessControlList);
 		$dom->appendChild($accessControlPolicy);
 
-		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('PUT', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setParameter('acl', null);
 		$rest->data = $dom->saveXML();
 		$rest->size = strlen($rest->data);
@@ -1163,7 +1175,7 @@ class S3
 	*/
 	public static function getAccessControlPolicy($bucket, $uri = '')
 	{
-		$rest = new S3Request('GET', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('GET', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest->setParameter('acl', null);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 200)
@@ -1224,7 +1236,7 @@ class S3
 	*/
 	public static function deleteObject($bucket, $uri)
 	{
-		$rest = new S3Request('DELETE', $bucket, $uri, self::$endpoint);
+		$rest = new S3Request('DELETE', $bucket, $uri, self::$endpoint, self::$region, self::$useDnsBucket);
 		$rest = $rest->getResponse();
 		if ($rest->error === false && $rest->code !== 204)
 			$rest->error = array('code' => $rest->code, 'message' => 'Unexpected HTTP status');
@@ -1900,7 +1912,7 @@ class S3
 			'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif',
 			'png' => 'image/png', 'ico' => 'image/x-icon', 'pdf' => 'application/pdf',
 			'tif' => 'image/tiff', 'tiff' => 'image/tiff', 'svg' => 'image/svg+xml',
-			'svgz' => 'image/svg+xml', 'swf' => 'application/x-shockwave-flash', 
+			'svgz' => 'image/svg+xml', 'swf' => 'application/x-shockwave-flash',
 			'zip' => 'application/zip', 'gz' => 'application/x-gzip',
 			'tar' => 'application/x-tar', 'bz' => 'application/x-bzip',
 			'bz2' => 'application/x-bzip2',  'rar' => 'application/x-rar-compressed',
@@ -1983,7 +1995,7 @@ class S3
 
 	/**
 	* Generate the headers for AWS Signature V4
-	* 
+	*
 	* @internal Used by S3Request::getResponse()
 	* @param array $amzHeaders
 	* @param array $headers
@@ -1993,7 +2005,7 @@ class S3
 	* @return array
 	*/
 	public static function __getSignatureV4($amzHeaders, $headers, $method, $uri, $parameters)
-	{		
+	{
 		$service = 's3';
 		$region = S3::getRegion();
 
@@ -2005,12 +2017,12 @@ class S3
 		// CanonicalHeaders
 		foreach ($headers as $k => $v)
 			$combinedHeaders[strtolower($k)] = trim($v);
-		foreach ($amzHeaders as $k => $v) 
+		foreach ($amzHeaders as $k => $v)
 			$combinedHeaders[strtolower($k)] = trim($v);
 		uksort($combinedHeaders, array('self', '__sortMetaHeadersCmp'));
 
 		// Convert null query string parameters to strings and sort
-		$parameters = array_map('strval', $parameters); 
+		$parameters = array_map('strval', $parameters);
 		uksort($parameters, array('self', '__sortMetaHeadersCmp'));
 		$queryString = http_build_query($parameters, null, '&', PHP_QUERY_RFC3986);
 
@@ -2022,7 +2034,7 @@ class S3
 
 		$amzPayload[] = $queryString;
 		// add header as string to requests
-		foreach ($combinedHeaders as $k => $v ) 
+		foreach ($combinedHeaders as $k => $v )
 		{
 			$amzPayload[] = $k . ':' . $v;
 		}
@@ -2039,7 +2051,7 @@ class S3
 		$credentialScope = array($amzDateStamp, $region, $service, 'aws4_request');
 
 		// stringToSign
-		$stringToSignStr = implode("\n", array($algorithm, $amzHeaders['x-amz-date'], 
+		$stringToSignStr = implode("\n", array($algorithm, $amzHeaders['x-amz-date'],
 		implode('/', $credentialScope), hash('sha256', $amzPayloadStr)));
 
 		// Make Signature
@@ -2080,7 +2092,7 @@ class S3
 }
 
 /**
- * S3 Request class 
+ * S3 Request class
  *
  * @link http://undesigned.org.za/2007/10/22/amazon-s3-php-class
  * @version 0.5.0-dev
@@ -2094,7 +2106,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $endpoint;
-	
+
 	/**
 	 * Verb
 	 *
@@ -2102,7 +2114,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $verb;
-	
+
 	/**
 	 * S3 bucket name
 	 *
@@ -2110,7 +2122,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $bucket;
-	
+
 	/**
 	 * Object URI
 	 *
@@ -2118,7 +2130,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $uri;
-	
+
 	/**
 	 * Final object URI
 	 *
@@ -2126,7 +2138,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $resource = '';
-	
+
 	/**
 	 * Additional request parameters
 	 *
@@ -2134,7 +2146,7 @@ final class S3Request
 	 * @access private
 	 */
 	private $parameters = array();
-	
+
 	/**
 	 * Amazon specific request headers
 	 *
@@ -2193,9 +2205,10 @@ final class S3Request
 	* @param string $bucket Bucket name
 	* @param string $uri Object URI
 	* @param string $endpoint AWS endpoint URI
+	* @param bool $dnsBucket Use https://bucket.endpoint.domain -style bucket references, instead of https://endpoint.domain/bucket style.
 	* @return mixed
 	*/
-	function __construct($verb, $bucket = '', $uri = '', $endpoint = 's3.amazonaws.com')
+	function __construct($verb, $bucket = '', $uri = '', $endpoint = 's3.amazonaws.com', $dnsBucket = true)
 	{
 		$this->endpoint = $endpoint;
 		$this->verb = $verb;
@@ -2204,7 +2217,7 @@ final class S3Request
 
 		if ($this->bucket !== '')
 		{
-			if ($this->__dnsBucketName($this->bucket))
+			if ($dnsBucket && $this->__dnsBucketName($this->bucket))
 			{
 				$this->headers['Host'] = $this->bucket.'.'.$this->endpoint;
 				$this->resource = '/'.$this->bucket.$this->uri;
@@ -2224,7 +2237,6 @@ final class S3Request
 			$this->headers['Host'] = $this->endpoint;
 			$this->resource = $this->uri;
 		}
-
 
 		$this->headers['Date'] = gmdate('D, d M Y H:i:s T');
 		$this->response = new STDClass;
@@ -2328,7 +2340,7 @@ final class S3Request
 		}
 
 		// Headers
-		$httpHeaders = array(); 
+		$httpHeaders = array();
 		if (S3::hasAuth())
 		{
 			// Authorization string (CloudFront stringToSign should only contain a date)
@@ -2347,7 +2359,7 @@ final class S3Request
 			{
 				$this->amzHeaders['x-amz-date'] = gmdate('Ymd\THis\Z');
 
-				if (!isset($this->amzHeaders['x-amz-content-sha256'])) 
+				if (!isset($this->amzHeaders['x-amz-content-sha256']))
 					$this->amzHeaders['x-amz-content-sha256'] = hash('sha256', $this->data);
 
 				foreach ($this->amzHeaders as $header => $value)
@@ -2358,8 +2370,8 @@ final class S3Request
 
 				$httpHeaders[] = 'Authorization: ' . S3::__getSignatureV4(
 					$this->amzHeaders,
-					$this->headers, 
-					$this->verb, 
+					$this->headers,
+					$this->verb,
 					$this->uri,
 					$this->parameters
 				);
